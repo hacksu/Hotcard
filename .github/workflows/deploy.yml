@@ -11,10 +11,9 @@ permissions:
   id-token: write
 
 jobs:
-  build:
-    name: Compile hotcard.typ and hotcard_4x.typ
+  compile-4x:
+    name: Compile hotcard_4x.typ
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -22,17 +21,71 @@ jobs:
       - name: Install Typst
         uses: typst-community/setup-typst@v5
 
-      - name: Compile 2x2 sheet
+      - name: Compile to PDF
+        run: typst compile --font-path fonts hotcard_4x.typ hotcard_4x.pdf
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotcard-4x-pdf
+          path: hotcard_4x.pdf
+
+  compile-single:
+    name: Compile hotcard.typ
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Typst
+        uses: typst-community/setup-typst@v5
+
+      - name: Compile to PDF
+        run: typst compile --font-path fonts hotcard.typ hotcard.pdf
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotcard-single-pdf
+          path: hotcard.pdf
+
+  verify-4x-pdf:
+    name: Verify 2x2 sheet PDF
+    needs: compile-4x
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download PDF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hotcard-4x-pdf
+
+      - name: Check PDF is non-empty and valid
         run: |
-          mkdir -p site/single
-          typst compile --font-path fonts hotcard_4x.typ site/hotcard_4x.pdf
+          test -s hotcard_4x.pdf
+          head -c 4 hotcard_4x.pdf | grep -q '%PDF'
 
-      - name: Compile single card
-        run: typst compile --font-path fonts hotcard.typ site/single/hotcard.pdf
+  verify-single-pdf:
+    name: Verify single card PDF
+    needs: compile-single
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download PDF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hotcard-single-pdf
 
+      - name: Check PDF is non-empty and valid
+        run: |
+          test -s hotcard.pdf
+          head -c 4 hotcard.pdf | grep -q '%PDF'
+
+  build-page-root:
+    name: Build root index.html
+    runs-on: ubuntu-latest
+    steps:
       - name: Create index.html
         run: |
-          cat > site/index.html << 'EOF'
+          cat > index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head>
@@ -49,9 +102,19 @@ jobs:
           </html>
           EOF
 
-      - name: Create single/index.html
+      - name: Upload page artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-html-root
+          path: index.html
+
+  build-page-single:
+    name: Build single/index.html
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create index.html
         run: |
-          cat > site/single/index.html << 'EOF'
+          cat > index.html << 'EOF'
           <!DOCTYPE html>
           <html>
           <head>
@@ -68,6 +131,73 @@ jobs:
           </html>
           EOF
 
+      - name: Upload page artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-html-single
+          path: index.html
+
+  verify-page-root:
+    name: Verify root index.html
+    needs: build-page-root
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download page artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: index-html-root
+
+      - name: Check index.html references the PDF and has the expected title
+        run: |
+          test -s index.html
+          grep -qF '<embed src="hotcard_4x.pdf"' index.html
+          grep -qF '<title>HacKSU Hotcard</title>' index.html
+
+  verify-page-single:
+    name: Verify single/index.html
+    needs: build-page-single
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download page artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: index-html-single
+
+      - name: Check index.html references the PDF and has the expected title
+        run: |
+          test -s index.html
+          grep -qF '<embed src="hotcard.pdf"' index.html
+          grep -qF '<title>HacKSU Hotcard (Single)</title>' index.html
+
+  package:
+    name: Package site bundle
+    needs: [verify-4x-pdf, verify-single-pdf, verify-page-root, verify-page-single]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download 2x2 sheet PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: hotcard-4x-pdf
+          path: site
+
+      - name: Download root index.html
+        uses: actions/download-artifact@v4
+        with:
+          name: index-html-root
+          path: site
+
+      - name: Download single card PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: hotcard-single-pdf
+          path: site/single
+
+      - name: Download single index.html
+        uses: actions/download-artifact@v4
+        with:
+          name: index-html-single
+          path: site/single
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -75,14 +205,30 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
+    needs: package
     runs-on: ubuntu-latest
-    needs: build
 
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  summary:
+    name: Report deployment
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write deployment summary
+        run: |
+          {
+            echo "### Deployed"
+            echo "- 2x2 sheet: ${{ needs.deploy.outputs.page_url }}"
+            echo "- Single card: ${{ needs.deploy.outputs.page_url }}single/"
+          } >> "$GITHUB_STEP_SUMMARY"
