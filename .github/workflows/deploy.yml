@@ -1,0 +1,88 @@
+name: Compile Typst to PDF
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Compile hotcard.typ and hotcard_4x.typ
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Typst
+        uses: typst-community/setup-typst@v5
+
+      - name: Compile 2x2 sheet
+        run: |
+          mkdir -p site/single
+          typst compile --font-path fonts hotcard_4x.typ site/hotcard_4x.pdf
+
+      - name: Compile single card
+        run: typst compile --font-path fonts hotcard.typ site/single/hotcard.pdf
+
+      - name: Create index.html
+        run: |
+          cat > site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>HacKSU Hotcard</title>
+            <style>
+              body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+              embed { width: 100%; height: 100%; }
+            </style>
+          </head>
+          <body>
+            <embed src="hotcard_4x.pdf" type="application/pdf" width="100%" height="100%">
+          </body>
+          </html>
+          EOF
+
+      - name: Create single/index.html
+        run: |
+          cat > site/single/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>HacKSU Hotcard (Single)</title>
+            <style>
+              body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+              embed { width: 100%; height: 100%; }
+            </style>
+          </head>
+          <body>
+            <embed src="hotcard.pdf" type="application/pdf" width="100%" height="100%">
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
